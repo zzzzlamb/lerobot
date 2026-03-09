@@ -33,7 +33,7 @@ class OpenArmLeaderConfigBase:
 
     # CAN FD settings (OpenArms uses CAN FD by default)
     use_can_fd: bool = True
-    can_bitrate: int = 1000000  # Nominal bitrate (1 Mbps)
+    can_bitrate: int = 115200  # Nominal bitrate (115.2 kbps)
     can_data_bitrate: int = 5000000  # Data bitrate for CAN FD (5 Mbps)
 
     # Motor configuration for OpenArms (7 DOF per arm)

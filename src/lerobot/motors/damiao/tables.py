@@ -151,14 +151,14 @@ AVAILABLE_BAUDRATES = [
     200000,  # 1: 200 kbps
     250000,  # 2: 250 kbps
     500000,  # 3: 500 kbps
-    1000000,  # 4: 1 mbps (default for OpenArms)
+    1000000,  # 4: 1 mbps
     2000000,  # 5: 2 mbps
     2500000,  # 6: 2.5 mbps
     3200000,  # 7: 3.2 mbps
     4000000,  # 8: 4 mbps
     5000000,  # 9: 5 mbps
 ]
-DEFAULT_BAUDRATE = 1000000  # 1 Mbps is standard for OpenArms
+DEFAULT_BAUDRATE = 115200
 
 # Default timeout in milliseconds
 DEFAULT_TIMEOUT_MS = 1000

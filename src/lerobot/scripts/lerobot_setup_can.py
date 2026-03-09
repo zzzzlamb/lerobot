@@ -63,7 +63,7 @@ MOTOR_NAMES = {
 class CANSetupConfig:
     mode: str = "test"
     interfaces: str = "can0"  # Comma-separated, e.g. "can0,can1,can2,can3"
-    bitrate: int = 1000000
+    bitrate: int = 115200
     data_bitrate: int = 5000000
     use_fd: bool = True
     motor_ids: list[int] = field(default_factory=lambda: list(range(0x01, 0x09)))

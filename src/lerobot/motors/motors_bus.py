@@ -518,7 +518,10 @@ class SerialMotorsBus(MotorsBusBase):
         try:
             if not self.port_handler.openPort():
                 raise OSError(f"Failed to open port '{self.port}'.")
-            elif handshake:
+            # Align SDK port speed with the bus default before any ping/handshake.
+            # This is required when motors were configured to a non-SDK-default baudrate.
+            self.set_baudrate(self.default_baudrate)
+            if handshake:
                 self._handshake()
         except (FileNotFoundError, OSError, serial.SerialException) as e:
             raise ConnectionError(
