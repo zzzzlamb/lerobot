@@ -34,7 +34,7 @@ from .tables import (
 )
 
 PROTOCOL_VERSION = 2.0
-DEFAULT_BAUDRATE = 1_000_000
+DEFAULT_BAUDRATE = 115_200
 DEFAULT_TIMEOUT_MS = 1000
 
 NORMALIZED_DATA = ["Goal_Position", "Present_Position"]

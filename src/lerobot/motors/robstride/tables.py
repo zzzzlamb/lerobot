@@ -83,9 +83,9 @@ MODEL_RESOLUTION = {
 
 # CAN baudrates supported by Robstride motors
 AVAILABLE_BAUDRATES = [
-    1000000,  # 4: 1 mbps (default)
+    1000000,  # 4: 1 mbps
 ]
-DEFAULT_BAUDRATE = 1000000
+DEFAULT_BAUDRATE = 115200
 
 # Default timeout in milliseconds
 DEFAULT_TIMEOUT_MS = 0  # disabled by default, otherwise 20000 is 1s

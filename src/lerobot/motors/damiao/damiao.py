@@ -96,7 +96,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         calibration: dict[str, MotorCalibration] | None = None,
         can_interface: str = "auto",
         use_can_fd: bool = True,
-        bitrate: int = 1000000,
+        bitrate: int = 115200,
         data_bitrate: int | None = 5000000,
     ):
         """
@@ -108,7 +108,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             calibration: Optional calibration data
             can_interface: CAN interface type - "auto" (default), "socketcan" (Linux), or "slcan" (macOS/serial)
             use_can_fd: Whether to use CAN FD mode (default: True for OpenArms)
-            bitrate: Nominal bitrate in bps (default: 1000000 = 1 Mbps)
+            bitrate: Nominal bitrate in bps (default: 115200 = 115.2 kbps)
             data_bitrate: Data bitrate for CAN FD in bps (default: 5000000 = 5 Mbps), ignored if use_can_fd is False
         """
         super().__init__(port, motors, calibration)
