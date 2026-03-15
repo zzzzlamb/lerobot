@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
+from lerobot.utils.joint_smoothing import normalize_excluded_indices, validate_centered_window_size
 
 
 @PreTrainedConfig.register_subclass("act")
@@ -118,10 +119,15 @@ class ACTConfig(PreTrainedConfig):
     # Inference.
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
     temporal_ensemble_coeff: float | None = None
+    inference_smoothing_window_size: int = 1
+    inference_transition_interp_steps: int = 0
+    action_smoothing_excluded_indices: list[int] = field(default_factory=list)
 
     # Training and loss computation.
     dropout: float = 0.1
     kl_weight: float = 10.0
+    train_smoothness_loss_weight: float = 0.0
+    train_smoothness_window_size: int = 1
 
     # Training preset
     optimizer_lr: float = 1e-5
@@ -141,6 +147,12 @@ class ACTConfig(PreTrainedConfig):
                 "`n_action_steps` must be 1 when using temporal ensembling. This is "
                 "because the policy needs to be queried every step to compute the ensembled action."
             )
+        if self.temporal_ensemble_coeff is not None and (
+            self.inference_smoothing_window_size > 1 or self.inference_transition_interp_steps > 0
+        ):
+            raise NotImplementedError(
+                "Inference smoothing and temporal ensembling are not supported together in ACT yet."
+            )
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
@@ -149,6 +161,29 @@ class ACTConfig(PreTrainedConfig):
         if self.n_obs_steps != 1:
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
+            )
+        if self.inference_transition_interp_steps < 0:
+            raise ValueError(
+                f"`inference_transition_interp_steps` must be >= 0, got {self.inference_transition_interp_steps}."
+            )
+        if self.train_smoothness_loss_weight < 0:
+            raise ValueError(
+                f"`train_smoothness_loss_weight` must be >= 0, got {self.train_smoothness_loss_weight}."
+            )
+
+        validate_centered_window_size(
+            self.inference_smoothing_window_size,
+            field_name="inference_smoothing_window_size",
+        )
+        validate_centered_window_size(
+            self.train_smoothness_window_size,
+            field_name="train_smoothness_window_size",
+        )
+
+        if self.action_feature is not None:
+            self.action_smoothing_excluded_indices = normalize_excluded_indices(
+                self.action_feature.shape[0],
+                self.action_smoothing_excluded_indices,
             )
 
     def get_optimizer_preset(self) -> AdamWConfig:

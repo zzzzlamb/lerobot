@@ -222,6 +222,47 @@ def test_add_frame(tmp_path, empty_lerobot_dataset_factory):
     assert dataset[0]["state"].ndim == 0
 
 
+def test_add_frame_action_smoothing(tmp_path, empty_lerobot_dataset_factory):
+    features = {
+        ACTION: {
+            "dtype": "float32",
+            "shape": (3,),
+            "names": ["joint_1", "joint_2", "gripper"],
+        }
+    }
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "test",
+        features=features,
+        use_videos=False,
+        action_smoothing_window_size=3,
+        action_smoothing_excluded_indices=[-1],
+    )
+
+    frames = [
+        torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32),
+        torch.tensor([3.0, 3.0, 1.0], dtype=torch.float32),
+        torch.tensor([0.0, 0.0, 2.0], dtype=torch.float32),
+    ]
+    for action in frames:
+        dataset.add_frame({ACTION: action, "task": "Dummy task"})
+
+    dataset.save_episode()
+    dataset.finalize()
+
+    loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+    actions = torch.stack([loaded_dataset[i][ACTION] for i in range(len(loaded_dataset))])
+    expected_actions = torch.tensor(
+        [
+            [1.0, 1.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [1.0, 1.0, 2.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    torch.testing.assert_close(actions, expected_actions)
+
+
 def test_add_frame_state_1d(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (2,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
