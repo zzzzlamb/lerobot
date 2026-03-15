@@ -198,6 +198,11 @@ class DatasetRecordConfig:
     # Number of threads per encoder instance. None = auto (codec default).
     # Lower values reduce CPU usage, maps to 'lp' (via svtav1-params) for libsvtav1 and 'threads' for h264/hevc..
     encoder_threads: int | None = None
+    # Apply centered moving-average smoothing to recorded actions before each episode is saved.
+    # Set to an odd value > 1 to enable, e.g. 3 or 5.
+    action_smoothing_window_size: int = 1
+    # Action indices to leave untouched when smoothing. Example: [-1] keeps the last dimension unchanged.
+    action_smoothing_excluded_indices: list[int] = field(default_factory=list)
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
 
@@ -476,6 +481,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
                 encoder_threads=cfg.dataset.encoder_threads,
+                action_smoothing_window_size=cfg.dataset.action_smoothing_window_size,
+                action_smoothing_excluded_indices=cfg.dataset.action_smoothing_excluded_indices,
             )
 
             if hasattr(robot, "cameras") and len(robot.cameras) > 0:
@@ -501,6 +508,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
                 encoder_threads=cfg.dataset.encoder_threads,
+                action_smoothing_window_size=cfg.dataset.action_smoothing_window_size,
+                action_smoothing_excluded_indices=cfg.dataset.action_smoothing_excluded_indices,
             )
 
         # Load pretrained policy

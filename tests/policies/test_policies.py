@@ -33,7 +33,7 @@ from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
+from lerobot.policies.act.modeling_act import ACTPolicy, ACTTemporalEnsembler
 from lerobot.policies.factory import (
     get_policy_class,
     make_policy,
@@ -459,3 +459,98 @@ def test_act_temporal_ensembler():
         assert torch.all(offline_avg <= einops.reduce(seq_slice, "b s 1 -> b 1", "max"))
         # Selected atol=1e-4 keeping in mind actions in [-1, 1] and excepting 0.01% error.
         torch.testing.assert_close(online_avg, offline_avg, rtol=1e-4, atol=1e-4)
+
+
+def _make_dummy_act_policy_config(dummy_dataset_metadata, **kwargs) -> ACTConfig:
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    output_features = {ACTION: features[ACTION]}
+    input_features = {key: ft for key, ft in features.items() if key not in output_features}
+    return ACTConfig(
+        input_features=input_features,
+        output_features=output_features,
+        pretrained_backbone_weights=None,
+        **kwargs,
+    )
+
+
+def test_act_select_action_applies_optional_smoothing(dummy_dataset_metadata, monkeypatch):
+    config = _make_dummy_act_policy_config(
+        dummy_dataset_metadata,
+        n_action_steps=3,
+        chunk_size=3,
+        inference_smoothing_window_size=3,
+        inference_transition_interp_steps=1,
+        action_smoothing_excluded_indices=[-1],
+    )
+    policy = ACTPolicy(config)
+
+    action_chunks = iter(
+        [
+            torch.tensor(
+                [[[0.0, 0.0, 0.0], [3.0, 3.0, 1.0], [0.0, 0.0, 2.0]]],
+                dtype=torch.float32,
+                device=config.device,
+            ),
+            torch.tensor(
+                [[[6.0, 6.0, 3.0], [6.0, 6.0, 4.0], [6.0, 6.0, 5.0]]],
+                dtype=torch.float32,
+                device=config.device,
+            ),
+        ]
+    )
+    monkeypatch.setattr(policy, "predict_action_chunk", lambda _: next(action_chunks))
+
+    actions = [policy.select_action({}) for _ in range(7)]
+    actions = torch.cat(actions, dim=0).cpu()
+    expected_actions = torch.tensor(
+        [
+            [1.0, 1.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [1.0, 1.0, 2.0],
+            [3.5, 3.5, 3.0],
+            [31.0 / 6.0, 31.0 / 6.0, 3.0],
+            [6.0, 6.0, 4.0],
+            [6.0, 6.0, 5.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    torch.testing.assert_close(actions, expected_actions, rtol=0, atol=1e-5)
+
+
+def test_act_forward_adds_optional_smoothness_loss(dummy_dataset_metadata):
+    config = _make_dummy_act_policy_config(
+        dummy_dataset_metadata,
+        chunk_size=3,
+        use_vae=False,
+        train_smoothness_loss_weight=2.0,
+        train_smoothness_window_size=3,
+        action_smoothing_excluded_indices=[-1],
+    )
+    policy = ACTPolicy(config)
+
+    actions_hat = torch.tensor(
+        [[[0.0, 0.0, 0.0], [3.0, 3.0, 1.0], [0.0, 0.0, 2.0]]],
+        dtype=torch.float32,
+        device=config.device,
+    )
+
+    class DummyACTModel(torch.nn.Module):
+        def __init__(self, actions: torch.Tensor):
+            super().__init__()
+            self.actions = actions
+
+        def forward(self, batch):
+            return self.actions, (None, None)
+
+    policy.model = DummyACTModel(actions_hat)
+    batch = {
+        ACTION: actions_hat.clone(),
+        "action_is_pad": torch.tensor([[False, False, True]], dtype=torch.bool, device=config.device),
+    }
+
+    loss, loss_dict = policy.forward(batch)
+
+    assert loss_dict["l1_loss"] == pytest.approx(0.0)
+    assert loss_dict["smoothness_loss"] == pytest.approx(1.0)
+    assert loss.item() == pytest.approx(2.0)

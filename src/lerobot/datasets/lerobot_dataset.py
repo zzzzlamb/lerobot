@@ -78,7 +78,8 @@ from lerobot.datasets.video_utils import (
     get_video_info,
     resolve_vcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME
+from lerobot.utils.joint_smoothing import normalize_excluded_indices, smooth_action_array, validate_centered_window_size
 
 CODEBASE_VERSION = "v3.0"
 
@@ -581,6 +582,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        action_smoothing_window_size: int = 1,
+        action_smoothing_excluded_indices: list[int] | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -718,6 +721,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episodes_since_last_encoding = 0
         self.vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
+        validate_centered_window_size(
+            action_smoothing_window_size,
+            field_name="action_smoothing_window_size",
+        )
 
         # Unused attributes
         self.image_writer = None
@@ -732,6 +739,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
+        )
+        self.action_smoothing_window_size = action_smoothing_window_size
+        self.action_smoothing_excluded_indices = self._resolve_action_smoothing_excluded_indices(
+            action_smoothing_excluded_indices
         )
 
         # Track dataset state for efficient incremental writing
@@ -779,6 +790,29 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 queue_maxsize=encoder_queue_maxsize,
                 encoder_threads=encoder_threads,
             )
+
+    def _resolve_action_smoothing_excluded_indices(
+        self,
+        excluded_indices: list[int] | None,
+        *,
+        features: dict[str, dict] | None = None,
+    ) -> list[int]:
+        feature_map = features if features is not None else self.features
+        if ACTION not in feature_map:
+            return list(excluded_indices or [])
+
+        action_shape = feature_map[ACTION]["shape"]
+        if isinstance(action_shape, tuple):
+            if len(action_shape) != 1:
+                raise ValueError(
+                    "Action smoothing only supports 1D action vectors. "
+                    f"Got action shape {action_shape}."
+                )
+            action_dim = action_shape[0]
+        else:
+            action_dim = action_shape
+
+        return normalize_excluded_indices(action_dim, excluded_indices)
 
     def _close_writer(self) -> None:
         """Close and cleanup the parquet writer if it exists."""
@@ -1267,6 +1301,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 
+        if self.action_smoothing_window_size > 1 and ACTION in episode_buffer:
+            episode_buffer[ACTION] = smooth_action_array(
+                episode_buffer[ACTION],
+                self.action_smoothing_window_size,
+                excluded_indices=self.action_smoothing_excluded_indices,
+            )
+
         # Wait for image writer to end, so that episode stats over images can be computed
         self._wait_image_writer()
 
@@ -1657,9 +1698,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        action_smoothing_window_size: int = 1,
+        action_smoothing_excluded_indices: list[int] | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         vcodec = resolve_vcodec(vcodec)
+        validate_centered_window_size(
+            action_smoothing_window_size,
+            field_name="action_smoothing_window_size",
+        )
         obj = cls.__new__(cls)
         obj.meta = LeRobotDatasetMetadata.create(
             repo_id=repo_id,
@@ -1679,6 +1726,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episodes_since_last_encoding = 0
         obj.vcodec = vcodec
         obj._encoder_threads = encoder_threads
+        obj.action_smoothing_window_size = action_smoothing_window_size
+        obj.action_smoothing_excluded_indices = obj._resolve_action_smoothing_excluded_indices(
+            action_smoothing_excluded_indices,
+            features=features,
+        )
 
         if image_writer_processes or image_writer_threads:
             obj.start_image_writer(image_writer_processes, image_writer_threads)
