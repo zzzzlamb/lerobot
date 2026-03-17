@@ -177,3 +177,8 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+# Local personal instruction files
+操作指令
+操作指令copy
+操作指令 copy
