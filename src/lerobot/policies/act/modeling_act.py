@@ -36,11 +36,6 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
-from lerobot.utils.joint_smoothing import (
-    compute_smoothness_loss,
-    generate_transition_actions,
-    smooth_action_tensor,
-)
 
 
 class ACTPolicy(PreTrainedPolicy):
@@ -99,55 +94,7 @@ class ACTPolicy(PreTrainedPolicy):
         if self.config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler.reset()
         else:
-            self._action_queue = deque()
-
-        self._last_executed_action = None
-        self._recent_actions = deque()
-
-    def _reset_inference_smoothing_state(self) -> None:
-        self._last_executed_action = None
-        self._recent_actions.clear()
-
-    def _get_recent_action_context(self) -> Tensor | None:
-        if not self._recent_actions:
-            return None
-        return torch.stack(tuple(self._recent_actions), dim=1)
-
-    def _append_recent_action(self, action: Tensor) -> None:
-        history_length = self.config.inference_smoothing_window_size // 2
-        if history_length == 0:
-            return
-
-        self._recent_actions.append(action.detach().clone())
-        while len(self._recent_actions) > history_length:
-            self._recent_actions.popleft()
-
-    def _prepare_action_chunk_for_execution(self, actions: Tensor) -> Tensor:
-        if actions.shape[1] == 0:
-            return actions
-
-        if self._last_executed_action is not None and self._last_executed_action.shape != actions[:, 0].shape:
-            self._reset_inference_smoothing_state()
-
-        if self.config.inference_transition_interp_steps > 0 and self._last_executed_action is not None:
-            transition_actions = generate_transition_actions(
-                self._last_executed_action,
-                actions[:, 0],
-                self.config.inference_transition_interp_steps,
-                excluded_indices=self.config.action_smoothing_excluded_indices,
-            )
-            if transition_actions is not None:
-                actions = torch.cat([transition_actions, actions], dim=1)
-
-        if self.config.inference_smoothing_window_size > 1:
-            actions = smooth_action_tensor(
-                actions,
-                self.config.inference_smoothing_window_size,
-                excluded_indices=self.config.action_smoothing_excluded_indices,
-                left_context=self._get_recent_action_context(),
-            )
-
-        return actions
+            self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -168,15 +115,11 @@ class ACTPolicy(PreTrainedPolicy):
         # querying the policy.
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
-            actions = self._prepare_action_chunk_for_execution(actions)
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
-        action = self._action_queue.popleft()
-        self._last_executed_action = action.detach().clone()
-        self._append_recent_action(action)
-        return action
+        return self._action_queue.popleft()
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
@@ -203,15 +146,6 @@ class ACTPolicy(PreTrainedPolicy):
         ).mean()
 
         loss_dict = {"l1_loss": l1_loss.item()}
-        smoothness_loss = actions_hat.new_zeros(())
-        if self.config.train_smoothness_loss_weight > 0 and self.config.train_smoothness_window_size > 1:
-            smoothness_loss = compute_smoothness_loss(
-                actions_hat,
-                self.config.train_smoothness_window_size,
-                excluded_indices=self.config.action_smoothing_excluded_indices,
-                mask=~batch["action_is_pad"],
-            )
-            loss_dict["smoothness_loss"] = smoothness_loss.item()
         if self.config.use_vae:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
@@ -224,8 +158,6 @@ class ACTPolicy(PreTrainedPolicy):
             loss = l1_loss + mean_kld * self.config.kl_weight
         else:
             loss = l1_loss
-
-        loss = loss + smoothness_loss * self.config.train_smoothness_loss_weight
 
         return loss, loss_dict
 
